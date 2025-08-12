@@ -74,25 +74,41 @@ const AutoCleanCSV: React.FC = () => {
   const handleFileUpload = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-
+  
     setIsLoading(true);
+  
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        try {
+          const results = Papa.parse(reader.result, {
+            header: false,
+            skipEmptyLines: true,
+          });
     
-    Papa.parse(file, {
-      complete: (results: CSVData) => {
-        const [headerRow, ...dataRows] = results.data;
-        setHeaders(headerRow);
-        setCsvData(dataRows);
-        detectIssues(dataRows, headerRow);
-        setIsLoading(false);
-      },
-      header: false,
-      skipEmptyLines: true,
-      error: (error) => {
-        console.error('Error parsing CSV:', error);
+          const [headerRow, ...dataRows] = results.data as any[];
+          setHeaders(headerRow);
+          setCsvData(dataRows);
+          detectIssues(dataRows, headerRow);
+          setIsLoading(false);
+        } catch (error) {
+          console.error('Error parsing CSV:', error);
+          setIsLoading(false);
+        }
+      } else {
+        console.error('FileReader result is not a string');
         setIsLoading(false);
       }
-    });
+    };
+    
+    reader.onerror = () => {
+      console.error('Error reading file');
+      setIsLoading(false);
+    };
+  
+    reader.readAsText(file);
   }, []);
+  
 
   // Issue detection
   const detectIssues = useCallback((data: any[][], headers: string[]) => {
@@ -237,7 +253,19 @@ const AutoCleanCSV: React.FC = () => {
         type: 'success'
       });
     });
-
+    function median(values: number[]): number {
+      if (values.length === 0) return 0;
+    
+      const sorted = [...values].sort((a, b) => a - b);
+      const mid = Math.floor(sorted.length / 2);
+    
+      if (sorted.length % 2 === 0) {
+        return (sorted[mid - 1] + sorted[mid]) / 2;
+      } else {
+        return sorted[mid];
+      }
+    }
+    
     // Fill missing values
     Object.keys(issues.missing).forEach(column => {
       const nonEmptyValues = objectData
@@ -253,7 +281,7 @@ const AutoCleanCSV: React.FC = () => {
         let fillValue;
         if (numericValues.length === nonEmptyValues.length) {
           // It's numeric, use median
-          fillValue = _.median(numericValues) || 0;
+          fillValue = median(numericValues);
         } else {
           // It's categorical, use mode
           const counts = _.countBy(nonEmptyValues);
@@ -288,9 +316,11 @@ const AutoCleanCSV: React.FC = () => {
   // Download cleaned CSV
   const downloadCSV = useCallback(() => {
     const csvContent = [headers, ...cleanedData]
-      .map(row => row.map(cell => `"${cell}"`).join(','))
+      .map((row: (string | null | undefined)[]) => 
+        row.map((cell: string | null | undefined) => `"${cell ?? ''}"`).join(',')
+      )
       .join('\n');
-    
+  
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     if (link.download !== undefined) {
@@ -303,6 +333,7 @@ const AutoCleanCSV: React.FC = () => {
       document.body.removeChild(link);
     }
   }, [headers, cleanedData]);
+  
 
   // Generate PDF report
   const generatePDF = useCallback(async () => {
@@ -560,15 +591,15 @@ const AutoCleanCSV: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {csvData.slice(0, 5).map((row, rowIndex) => (
-                      <tr key={rowIndex}>
-                        {row.map((cell, cellIndex) => (
-                          <td key={cellIndex} className="px-4 py-2 whitespace-nowrap text-sm text-gray-900">
-                            {cell?.toString() || ''}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
+                                        {csvData.slice(0, 5).map((row: string[], rowIndex: number) => (
+                        <tr key={rowIndex}>
+                          {row.map((cell: string | null | undefined, cellIndex: number) => (
+                            <td key={cellIndex} className="px-4 py-2 whitespace-nowrap text-sm text-gray-900">
+                              {cell?.toString() || ''}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
                   </tbody>
                 </table>
               </div>
@@ -646,15 +677,15 @@ const AutoCleanCSV: React.FC = () => {
                       </tr>
                     </thead>
                     <tbody className="bg-white divide-y divide-gray-200">
-                      {cleanedData.slice(0, 10).map((row, rowIndex) => (
-                        <tr key={rowIndex}>
-                          {row.map((cell, cellIndex) => (
-                            <td key={cellIndex} className="px-4 py-2 whitespace-nowrap text-sm text-gray-900">
-                              {cell?.toString() || ''}
-                            </td>
+                                              {cleanedData.slice(0, 10).map((row: (string | null | undefined)[], rowIndex: number) => (
+                            <tr key={rowIndex}>
+                              {row.map((cell: string | null | undefined, cellIndex: number) => (
+                                <td key={cellIndex} className="px-4 py-2 whitespace-nowrap text-sm text-gray-900">
+                                  {cell?.toString() || ''}
+                                </td>
+                              ))}
+                            </tr>
                           ))}
-                        </tr>
-                      ))}
                     </tbody>
                   </table>
                 </div>
@@ -720,12 +751,14 @@ const AutoCleanCSV: React.FC = () => {
                 return (
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
                     <MetricCard label="Count" value={columnData.length} icon={BarChart3} color="blue" />
-                    <MetricCard label="Mean" value={_.mean(numericData).toFixed(2)} icon={TrendingUp} color="green" />
-                    <MetricCard label="Min" value={_.min(numericData)} icon={BarChart3} color="yellow" />
-                    <MetricCard label="Max" value={_.max(numericData)} icon={BarChart3} color="red" />
+                    <MetricCard label="Mean" value={(_.mean(numericData) ?? 0).toFixed(2)} icon={TrendingUp} color="green" />
+                    <MetricCard label="Min" value={_.min(numericData) ?? 0} icon={BarChart3} color="yellow" />
+                    <MetricCard label="Max" value={_.max(numericData) ?? 0} icon={BarChart3} color="red" />
                   </div>
                 );
-              } else {
+              }
+              
+              else {
                 // Categorical data analysis
                 const valueCounts = _.countBy(columnData);
                 const topValues = Object.entries(valueCounts)
@@ -778,14 +811,19 @@ const AutoCleanCSV: React.FC = () => {
         
         <div className="flex justify-center mb-6">
           <button
-            onClick={() => {
-              const randomIndex = Math.floor(Math.random() * csvData.length);
-              const row = {};
-              headers.forEach((header, index) => {
-                row[header] = csvData[randomIndex][index];
-              });
-              setSelectedRow(row);
-            }}
+         onClick={() => {
+          const randomIndex = Math.floor(Math.random() * csvData.length);
+          
+          // Explicitly type row so we can assign keys dynamically
+          const row: Record<string, string | undefined> = {};
+          
+          headers.forEach((header, index) => {
+            row[header] = csvData[randomIndex][index];
+          });
+          
+          setSelectedRow(row);
+        }}
+        
             className="group bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white font-bold py-3 px-6 rounded-xl transform transition-all duration-300 hover:scale-105 shadow-lg hover:shadow-xl flex items-center space-x-3"
           >
             <Shuffle size={20} className="animate-spin" />
